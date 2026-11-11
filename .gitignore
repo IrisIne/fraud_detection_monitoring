@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.py[cod]
+airflow-logs/
+airflow-work/
+shared/models/*.joblib
+shared/models/latest.json
+shared/reports/*.html
+!shared/models/.gitkeep
+!shared/reports/.gitkeep

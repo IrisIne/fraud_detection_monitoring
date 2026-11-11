@@ -1,0 +1,314 @@
+name: fraud-monitoring
+
+x-airflow-common: &airflow-common
+  image: fraud-airflow:2.10.5
+  build:
+    context: .
+    dockerfile: airflow/Dockerfile
+  environment: &airflow-environment
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-pipeline_user}:${POSTGRES_PASSWORD:-pipeline_password}@postgres:5432/airflow
+    AIRFLOW__WEBSERVER__SECRET_KEY: local-airflow-secret-key
+    AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
+    AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+    FRAUD_DATABASE_DSN: dbname=fraud_detection user=${POSTGRES_USER:-pipeline_user} password=${POSTGRES_PASSWORD:-pipeline_password} host=postgres port=5432
+    TRAIN_SEED_CSV: /opt/airflow/data/train_seed.csv
+    MODEL_DIR: /opt/airflow/models
+    REPORT_DIR: /opt/airflow/reports
+    WORK_DIR: /opt/airflow/work
+    TRAINING_WINDOW_MONTHS: 3
+    LABELED_BATCH_SIZE: 5000
+    HISTORY_MONTHS: 12
+    FRAUD_THRESHOLD: ${FRAUD_THRESHOLD:-0.98}
+    PYTHONPATH: /opt/airflow
+  volumes:
+    - ./dags:/opt/airflow/dags:ro
+    - ./ml_pipeline:/opt/airflow/ml_pipeline:ro
+    - ./common:/opt/airflow/common:ro
+    - ./data:/opt/airflow/data:ro
+    - ./shared/models:/opt/airflow/models
+    - ./shared/reports:/opt/airflow/reports
+    - airflow-logs:/opt/airflow/logs
+    - airflow-work:/opt/airflow/work
+  user: "50000:0"
+  networks: [fraud-network]
+
+services:
+  postgres:
+    image: postgres:16.4
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-pipeline_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pipeline_password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pipeline_user} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [fraud-network]
+
+  kafka:
+    image: apache/kafka:3.9.1
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:29092,PLAINTEXT_HOST://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_HEAP_OPTS: -Xms384m -Xmx384m
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+    networks: [fraud-network]
+
+  kafka-init:
+    image: apache/kafka:3.9.1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic transactions --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic scores --partitions 3 --replication-factor 1
+    restart: "no"
+    networks: [fraud-network]
+
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:v1.2.0
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "8082:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    networks: [fraud-network]
+
+  airflow-permissions:
+    image: alpine:3.20
+    user: "0:0"
+    command: ["sh", "-c", "chmod -R 0777 /models /reports /logs /work"]
+    volumes:
+      - ./shared/models:/models
+      - ./shared/reports:/reports
+      - airflow-logs:/logs
+      - airflow-work:/work
+    networks: [fraud-network]
+    restart: "no"
+
+  airflow-init:
+    <<: *airflow-common
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-permissions:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        airflow db migrate
+        if ! airflow users list | grep -q "$${AIRFLOW_ADMIN_USER}"; then
+          airflow users create \
+            --username "$${AIRFLOW_ADMIN_USER}" \
+            --password "$${AIRFLOW_ADMIN_PASSWORD}" \
+            --firstname Local \
+            --lastname Admin \
+            --role Admin \
+            --email admin@example.local
+        fi
+    restart: "no"
+
+  pipeline-bootstrap:
+    <<: *airflow-common
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-permissions:
+        condition: service_completed_successfully
+    command: ["python", "-m", "ml_pipeline.bootstrap"]
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      pipeline-bootstrap:
+        condition: service_completed_successfully
+    command: webserver
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      pipeline-bootstrap:
+        condition: service_completed_successfully
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$${HOSTNAME}\""]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    restart: unless-stopped
+
+  fraud-detector:
+    build:
+      context: .
+      dockerfile: fraud_detector/Dockerfile
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      pipeline-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TRANSACTIONS_TOPIC: transactions
+      KAFKA_SCORES_TOPIC: scores
+      KAFKA_CONSUMER_GROUP: fraud-detector-airflow-v1
+      MODEL_DIR: /models
+      FRAUD_THRESHOLD: ${FRAUD_THRESHOLD:-0.98}
+    volumes:
+      - ./shared/models:/models:ro
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    networks: [fraud-network]
+
+  score-writer:
+    build:
+      context: .
+      dockerfile: score_writer/Dockerfile
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_SCORES_TOPIC: scores
+      KAFKA_CONSUMER_GROUP: score-writer-airflow-v1
+      FRAUD_DATABASE_DSN: dbname=fraud_detection user=${POSTGRES_USER:-pipeline_user} password=${POSTGRES_PASSWORD:-pipeline_password} host=postgres port=5432
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+    networks: [fraud-network]
+
+  transaction-producer:
+    build:
+      context: .
+      dockerfile: transaction_producer/Dockerfile
+    profiles: ["manual"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TRANSACTIONS_TOPIC: transactions
+      INPUT_CSV: /data/test_sample.csv
+      MESSAGE_LIMIT: 100
+    volumes:
+      - ./data:/data:ro
+    networks: [fraud-network]
+
+  transaction-stream:
+    build:
+      context: .
+      dockerfile: transaction_producer/Dockerfile
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TRANSACTIONS_TOPIC: transactions
+      INPUT_CSV: /data/test_sample.csv
+      MESSAGE_LIMIT: 0
+      STREAM_INTERVAL_SECONDS: 0.2
+    volumes:
+      - ./data:/data:ro
+    restart: unless-stopped
+    networks: [fraud-network]
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    networks: [fraud-network]
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    command: ["--path.rootfs=/host"]
+    volumes:
+      - /:/host:ro
+    restart: unless-stopped
+    networks: [fraud-network]
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    depends_on:
+      - prometheus
+      - postgres
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      POSTGRES_USER: ${POSTGRES_USER:-pipeline_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pipeline_password}
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks: [fraud-network]
+
+volumes:
+  postgres-data:
+  kafka-data:
+  airflow-logs:
+  airflow-work:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  fraud-network:
+    driver: bridge

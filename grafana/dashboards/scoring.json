@@ -1,0 +1,277 @@
+{
+  "uid": "fraud-scoring",
+  "title": "Обработка транзакций",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "tags": [
+    "fraud",
+    "monitoring"
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Транзакции в секунду",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(fraud_scoring_transactions_total[1m])",
+          "legendFormat": "Транзакций/с"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Время обработки, P95",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(fraud_scoring_duration_seconds_bucket[1m])))",
+          "legendFormat": "P95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Доля мошеннических транзакций",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "fraud_scoring_fraud_share",
+          "legendFormat": "Доля мошеннических транзакций"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Распределение скоров мошенничества во времени",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(fraud_scoring_score_bucket{le=\"0.05\"}[1m]))",
+          "legendFormat": "0-0.05"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(fraud_scoring_score_bucket{le=\"0.2\"}[1m])) - sum(rate(fraud_scoring_score_bucket{le=\"0.05\"}[1m]))",
+          "legendFormat": "0.05-0.2"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(fraud_scoring_score_bucket{le=\"0.6\"}[1m])) - sum(rate(fraud_scoring_score_bucket{le=\"0.2\"}[1m]))",
+          "legendFormat": "0.2-0.6"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(fraud_scoring_score_bucket{le=\"0.98\"}[1m])) - sum(rate(fraud_scoring_score_bucket{le=\"0.6\"}[1m]))",
+          "legendFormat": "0.6-0.98"
+        },
+        {
+          "refId": "E",
+          "expr": "sum(rate(fraud_scoring_score_bucket{le=\"1.0\"}[1m])) - sum(rate(fraud_scoring_score_bucket{le=\"0.98\"}[1m]))",
+          "legendFormat": "0.98-1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Состав потока по сумме",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(fraud_scoring_amount_bucket_total{bucket=\"SMALL\"}[1m]))",
+          "legendFormat": "До 20"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(fraud_scoring_amount_bucket_total{bucket=\"MEDIUM\"}[1m]))",
+          "legendFormat": "20-100"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(fraud_scoring_amount_bucket_total{bucket=\"LARGE\"}[1m]))",
+          "legendFormat": "100-500"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(fraud_scoring_amount_bucket_total{bucket=\"VERY_LARGE\"}[1m]))",
+          "legendFormat": "От 500"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Неверные сообщения",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(fraud_scoring_invalid_messages_total[1m])",
+          "legendFormat": "Сообщений/с"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Смена модели",
+        "enable": true,
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "expr": "fraud_scoring_model_loads_total unless fraud_scoring_model_loads_total offset 30s",
+        "iconColor": "#d97a28",
+        "tagKeys": "version",
+        "titleFormat": "Модель {{version}}",
+        "textFormat": "Скоринг перешёл на {{version}}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,90 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: Fraud service
+    folder: Fraud monitoring
+    interval: 10s
+    rules:
+      - uid: fraud_stream_stopped
+        title: Поток транзакций остановился
+        condition: B
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              expr: sum(increase(fraud_scoring_transactions_total[1m])) or vector(0)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 0
+              to: 0
+            model:
+              type: classic_conditions
+              expression: A
+              refId: B
+              conditions:
+                - type: query
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                  evaluator:
+                    type: lt
+                    params: [1]
+                  operator:
+                    type: and
+        noDataState: OK
+        execErrState: Error
+        for: 30s
+        labels:
+          service: fraud-detector
+          severity: warning
+      - uid: fraud_latency_high
+        title: Скоринг обрабатывает транзакции медленно
+        condition: B
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              expr: histogram_quantile(0.95, sum by (le) (rate(fraud_scoring_duration_seconds_bucket[1m]))) or vector(0)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 0
+              to: 0
+            model:
+              type: classic_conditions
+              expression: A
+              refId: B
+              conditions:
+                - type: query
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                  evaluator:
+                    type: gt
+                    params: [0.5]
+                  operator:
+                    type: and
+        noDataState: OK
+        execErrState: Error
+        for: 30s
+        labels:
+          service: fraud-detector
+          severity: warning

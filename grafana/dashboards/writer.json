@@ -1,0 +1,214 @@
+{
+  "uid": "fraud-writer",
+  "title": "Запись результатов",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "tags": [
+    "fraud",
+    "monitoring"
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Скорость записи скорингов в БД",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(fraud_writer_scores_total[1m])",
+          "legendFormat": "Записей/с"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Время записи, P95",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(fraud_writer_duration_seconds_bucket[1m])))",
+          "legendFormat": "P95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Всего выявлено мошеннических транзакций",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "fraud_writer_fraud_total",
+          "legendFormat": "Фродовых транзакций"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Распределение записанных скоров во времени",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(fraud_writer_score_bucket{le=\"0.05\"}[1m]))",
+          "legendFormat": "0-0.05"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(fraud_writer_score_bucket{le=\"0.2\"}[1m])) - sum(rate(fraud_writer_score_bucket{le=\"0.05\"}[1m]))",
+          "legendFormat": "0.05-0.2"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(fraud_writer_score_bucket{le=\"0.6\"}[1m])) - sum(rate(fraud_writer_score_bucket{le=\"0.2\"}[1m]))",
+          "legendFormat": "0.2-0.6"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(fraud_writer_score_bucket{le=\"0.98\"}[1m])) - sum(rate(fraud_writer_score_bucket{le=\"0.6\"}[1m]))",
+          "legendFormat": "0.6-0.98"
+        },
+        {
+          "refId": "E",
+          "expr": "sum(rate(fraud_writer_score_bucket{le=\"1.0\"}[1m])) - sum(rate(fraud_writer_score_bucket{le=\"0.98\"}[1m]))",
+          "legendFormat": "0.98-1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Скоры по версиям модели",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT model_version, count(*) AS scores, round(100.0 * avg(fraud_flag), 2) AS fraud_share_pct FROM transaction_scores GROUP BY model_version ORDER BY model_version",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  }
+}
